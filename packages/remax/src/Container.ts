@@ -2,15 +2,18 @@ import VNode, { Path, RawNode } from './VNode';
 import { generate } from './instanceId';
 import { FiberRoot } from 'react-reconciler';
 
-function stringPath(path: Path) {
-  return path.join('.');
-}
-
 interface SpliceUpdate {
   path: Path;
   start: number;
   deleteCount: number;
   items: RawNode[];
+}
+
+interface TreeUpdateSplice {
+  path: Path;
+  start: number;
+  deleteCount: number;
+  item: RawNode;
 }
 
 export default class Container {
@@ -19,6 +22,8 @@ export default class Container {
   updateQueue: SpliceUpdate[] = [];
   _rootContainer?: FiberRoot;
   stopUpdate?: boolean;
+  currentSetDataPromise: Promise<any>;
+  tree?: any;
 
   constructor(context: any) {
     this.context = context;
@@ -29,6 +34,10 @@ export default class Container {
       container: this,
     });
     this.root.mounted = true;
+    this.currentSetDataPromise = Promise.resolve();
+    this.tree = {
+      root: { children: [] },
+    };
   }
 
   requestUpdate(
@@ -60,35 +69,60 @@ export default class Container {
       return;
     }
 
-    const startTime = new Date().getTime();
+    const applyTime = new Date().getTime();
+    this.currentSetDataPromise = this.currentSetDataPromise
+      .then(
+        () =>
+          new Promise(resolve => {
+            if (this.updateQueue.length === 0) {
+              console.log('queue empty, ignore.');
+              return resolve();
+            }
+            if (this.stopUpdate) {
+              console.log('component unmounted, ignore.');
+              return resolve();
+            }
 
-    const action = {
-      type: 'splice',
-      payload: this.updateQueue.map(update => ({
-        path: stringPath(update.path),
-        start: update.start,
-        deleteCount: update.deleteCount,
-        item: update.items[0],
-      })),
-    };
+            const splices: TreeUpdateSplice[] = this.updateQueue.map(
+              update => ({
+                path: update.path,
+                start: update.start,
+                deleteCount: update.deleteCount,
+                item: update.items[0],
+              })
+            );
+            this.updateQueue = [];
+            this.updateTree(splices);
+            const updateTime = new Date().getTime();
+            this.context.setData({ tree: this.tree }, () => {
+              if (process.env.REMAX_DEBUG) {
+                console.log(
+                  'setData:',
+                  `applied ${new Date().getTime() - applyTime}ms ago`,
+                  `updated ${new Date().getTime() - updateTime}ms ago`,
+                  `updated splice length ${splices.length}`,
+                  `updateQueue length ${this.updateQueue.length}`
+                );
+              }
+              resolve();
+            });
+          })
+      )
+      .catch(e => {
+        console.warn(e);
+      });
+  }
 
-    let tree: typeof action | { root: RawNode } = action;
-
-    if (process.env.REMAX_PLATFORM === 'toutiao') {
-      tree = {
-        root: this.root.toJSON(),
-      };
-    }
-
-    this.context.setData({ action: tree }, () => {
-      if (process.env.REMAX_DEBUG) {
-        console.log(
-          `setData => 回调时间：${new Date().getTime() - startTime}ms`,
-          action
-        );
+  updateTree(splices: TreeUpdateSplice[]) {
+    for (let i = 0; i < splices.length; i += 1) {
+      const value = get(this.tree, splices[i].path);
+      if (splices[i].item) {
+        value.splice(splices[i].start, splices[i].deleteCount, splices[i].item);
+      } else {
+        value.splice(splices[i].start, splices[i].deleteCount);
       }
-    });
-    this.updateQueue = [];
+      set(this.tree, splices[i].path, value);
+    }
   }
 
   clearUpdate() {
@@ -109,5 +143,37 @@ export default class Container {
 
   insertBefore(child: VNode, beforeChild: VNode) {
     this.root.insertBefore(child, beforeChild, true);
+  }
+}
+
+function get(obj: any, path: Path) {
+  let nextObj = obj;
+
+  for (let i = 0; i < path.length; i += 1) {
+    const currentPath = path[i];
+    nextObj = nextObj[currentPath];
+    if (nextObj === undefined) {
+      nextObj = currentPath == 'children' ? [] : {};
+    }
+  }
+
+  return nextObj;
+}
+
+function set(obj: any, path: Path, value: any) {
+  if (path.length === 1) {
+    obj[path[0]] = value;
+  }
+
+  const nextObj = obj;
+
+  for (let i = 0; i < path.length; i += 1) {
+    const currentPath = path[i];
+    const currentValue = nextObj[currentPath];
+
+    if (currentValue === undefined) {
+      // check if we assume an array
+      nextObj[currentPath] = typeof path[i + 1] === 'number' ? [] : {};
+    }
   }
 }
