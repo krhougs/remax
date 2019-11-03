@@ -15,7 +15,7 @@ export default function createPageConfig(Page: React.ComponentType<any>) {
     pageId: 'page_' + id,
 
     data: {
-      action: {},
+      tree: {},
     },
 
     wrapperRef: React.createRef<any>(),

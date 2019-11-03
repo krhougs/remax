@@ -75,11 +75,15 @@ export default class Container {
         () =>
           new Promise(resolve => {
             if (this.updateQueue.length === 0) {
-              console.log('queue empty, ignore.');
+              if (process.env.REMAX_DEBUG) {
+                console.log('queue empty, ignore.');
+              }
               return resolve();
             }
             if (this.stopUpdate) {
-              console.log('component unmounted, ignore.');
+              if (process.env.REMAX_DEBUG) {
+                console.log('component unmounted, ignore.');
+              }
               return resolve();
             }
 
